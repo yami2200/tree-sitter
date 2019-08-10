@@ -419,6 +419,12 @@ bool ts_node_is_named(TSNode);
 bool ts_node_is_missing(TSNode);
 
 /**
+ * Check if the node is *missing*. Missing nodes are inserted by the parser in
+ * order to recover from certain kinds of syntax errors.
+ */
+bool ts_node_is_extra(TSNode);
+
+/**
  * Check if a syntax node has been edited.
  */
 bool ts_node_has_changes(TSNode);
@@ -604,6 +610,8 @@ bool ts_tree_cursor_goto_first_child(TSTreeCursor *);
  */
 int64_t ts_tree_cursor_goto_first_child_for_byte(TSTreeCursor *, uint32_t);
     
+TSTreeCursor ts_tree_cursor_copy(const TSTreeCursor *);
+
 TSTreeCursor ts_tree_cursor_copy(const TSTreeCursor *);
 
 /**********************/

@@ -2,6 +2,8 @@
 
 set -e
 
+EMSCRIPTEN_VERSION=1.38.40
+
 mkdir -p target
 EMSDK_DIR="./target/emsdk"
 
@@ -19,13 +21,14 @@ EMSDK_DIR="./target/emsdk"
   ./emsdk list
 
   echo 'Installing latest emscripten...'
-  ./emsdk install latest
+  ./emsdk install $EMSCRIPTEN_VERSION
 
   echo 'Activating latest emscripten...'
-  ./emsdk activate latest
+  ./emsdk activate $EMSCRIPTEN_VERSION
 ) >&2
 
 (
   source "$EMSDK_DIR/emsdk_env.sh" > /dev/null
+  emcc --version >&2
   declare -px
 )

@@ -14,6 +14,10 @@ lazy_static! {
         env::var("TREE_SITTER_BENCHMARK_LANGUAGE_FILTER").ok();
     static ref EXAMPLE_FILTER: Option<String> =
         env::var("TREE_SITTER_BENCHMARK_EXAMPLE_FILTER").ok();
+    static ref REPETITION_COUNT: usize = env::var("TREE_SITTER_BENCHMARK_REPETITION_COUNT")
+        .map(|s| usize::from_str_radix(&s, 10).unwrap())
+        .unwrap_or(5);
+
     static ref TEST_LOADER: Loader = Loader::new(SCRATCH_DIR.clone());
     static ref EXAMPLE_PATHS_BY_LANGUAGE_DIR: BTreeMap<PathBuf, Vec<PathBuf>> = {
         fn process_dir(result: &mut BTreeMap<PathBuf, Vec<PathBuf>>, dir: &Path) {
@@ -63,6 +67,8 @@ fn main() {
 
     let mut all_normal_speeds = Vec::new();
     let mut all_error_speeds = Vec::new();
+
+    eprintln!("Benchmarking with {} repetitions", *REPETITION_COUNT);
 
     for (language_path, example_paths) in EXAMPLE_PATHS_BY_LANGUAGE_DIR.iter() {
         let language_name = language_path.file_name().unwrap().to_str().unwrap();
@@ -157,10 +163,12 @@ fn parse(parser: &mut Parser, example_path: &Path, max_path_length: usize) -> us
         .map_err(Error::wrap(|| format!("Failed to read {:?}", example_path)))
         .unwrap();
     let time = Instant::now();
-    let _tree = parser
-        .parse(&source_code, None)
-        .expect("Incompatible language version");
-    let duration = time.elapsed();
+    for _ in 0..*REPETITION_COUNT {
+        parser
+            .parse(&source_code, None)
+            .expect("Incompatible language version");
+    }
+    let duration = time.elapsed() / (*REPETITION_COUNT as u32);
     let duration_ms =
         duration.as_secs() as f64 * 1000.0 + duration.subsec_nanos() as f64 / 1000000.0;
     let speed = (source_code.len() as f64 / duration_ms) as usize;

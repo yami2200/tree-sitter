@@ -61,16 +61,16 @@ pub(crate) struct ParseTable {
     pub max_aliased_production_length: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct AdvanceAction {
-    pub state: Option<LexStateId>,
+    pub state: LexStateId,
     pub in_main_token: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LexState {
-    pub advance_actions: Vec<(CharacterSet, AdvanceAction)>,
     pub accept_action: Option<Symbol>,
+    pub advance_actions: Vec<(CharacterSet, AdvanceAction)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]

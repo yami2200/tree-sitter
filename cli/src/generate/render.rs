@@ -40,6 +40,7 @@ macro_rules! indent {
 
 macro_rules! dedent {
     ($this: tt) => {
+        assert_ne!($this.indent_level, 0);
         $this.indent_level -= 1;
     };
 }
@@ -470,7 +471,7 @@ impl Generator {
         for (i, state) in lex_table.states.into_iter().enumerate() {
             add_line!(self, "case {}:", i);
             indent!(self);
-            self.add_lex_state(i, state);
+            self.add_lex_state(state);
             dedent!(self);
         }
 
@@ -486,7 +487,7 @@ impl Generator {
         add_line!(self, "");
     }
 
-    fn add_lex_state(&mut self, index: usize, state: LexState) {
+    fn add_lex_state(&mut self, state: LexState) {
         if let Some(accept_action) = state.accept_action {
             add_line!(self, "ACCEPT_TOKEN({});", self.symbol_ids[&accept_action]);
         }
@@ -498,17 +499,16 @@ impl Generator {
             add_whitespace!(self);
             add!(self, "if (");
             if self.add_character_set_condition(&characters, &ruled_out_characters) {
-                add!(self, ")\n");
-                indent!(self);
-                self.add_advance_action(index, &action);
+                add!(self, ") ");
+                self.add_advance_action(&action);
                 if let CharacterSet::Include(chars) = characters {
                     ruled_out_characters.extend(chars.iter().map(|c| *c as u32));
                 }
-                dedent!(self);
             } else {
                 self.buffer.truncate(previous_length);
-                self.add_advance_action(index, &action);
+                self.add_advance_action(&action);
             }
+            add!(self, "\n");
         }
 
         add_line!(self, "END_STATE();");
@@ -619,11 +619,11 @@ impl Generator {
             })
     }
 
-    fn add_advance_action(&mut self, index: usize, action: &AdvanceAction) {
+    fn add_advance_action(&mut self, action: &AdvanceAction) {
         if action.in_main_token {
-            add_line!(self, "ADVANCE({});", action.state.unwrap_or(index));
+            add!(self, "ADVANCE({});", action.state);
         } else {
-            add_line!(self, "SKIP({});", action.state.unwrap_or(index));
+            add!(self, "SKIP({})", action.state);
         }
     }
 
