@@ -148,7 +148,8 @@ const h = `i ${j(k} l`
   (lexical_declaration
     (variable_declarator
       (identifier)
-      (template_string (template_substitution (identifier) (ERROR)))))
+      (template_string (template_substitution
+        (augmented_assignment_expression (identifier) (MISSING identifier))))))
   (lexical_declaration
     (variable_declarator
       (identifier)
@@ -179,8 +180,9 @@ function main(x) {
           (member_expression (identifier) (property_identifier))
           (arguments (string))))
       (expression_statement
-        (identifier)
-        (ERROR
+        (binary_expression
+          (identifier)
+          (ERROR)
           (call_expression
             (member_expression (identifier) (property_identifier))
             (arguments (string)))))

@@ -1,19 +1,19 @@
 use rand::distributions::Alphanumeric;
-use rand::prelude::{Rng, SeedableRng, SmallRng};
+use rand::prelude::{Rng, SeedableRng, StdRng};
 
 const OPERATORS: &[char] = &[
     '+', '-', '<', '>', '(', ')', '*', '/', '&', '|', '!', ',', '.',
 ];
 
-pub struct Rand(SmallRng);
+pub struct Rand(StdRng);
 
 impl Rand {
     pub fn new(seed: usize) -> Self {
-        Rand(SmallRng::seed_from_u64(seed as u64))
+        Rand(StdRng::seed_from_u64(seed as u64))
     }
 
     pub fn unsigned(&mut self, max: usize) -> usize {
-        self.0.gen_range(0, max + 1)
+        self.0.gen_range(0..max + 1)
     }
 
     pub fn words(&mut self, max_count: usize) -> Vec<u8> {

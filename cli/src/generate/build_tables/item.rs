@@ -1,12 +1,9 @@
 use crate::generate::grammars::{LexicalGrammar, Production, ProductionStep, SyntaxGrammar};
-use crate::generate::rules::Associativity;
-use crate::generate::rules::{Symbol, SymbolType};
+use crate::generate::rules::{Associativity, Precedence, Symbol, SymbolType, TokenSet};
 use lazy_static::lazy_static;
-use smallbitvec::SmallBitVec;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::iter::FromIterator;
 use std::u32;
 
 lazy_static! {
@@ -17,7 +14,7 @@ lazy_static! {
                 index: 0,
                 kind: SymbolType::NonTerminal,
             },
-            precedence: 0,
+            precedence: Precedence::None,
             associativity: None,
             alias: None,
             field_name: None,
@@ -25,29 +22,42 @@ lazy_static! {
     };
 }
 
-// Because tokens are represented as small (~400 max) unsigned integers,
-// sets of tokens can be efficiently represented as bit vectors with each
-// index correspoding to a token, and each value representing whether or not
-// the token is present in the set.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct TokenSet {
-    terminal_bits: SmallBitVec,
-    external_bits: SmallBitVec,
-    eof: bool,
-}
-
+/// A ParseItem represents an in-progress match of a single production in a grammar.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ParseItem<'a> {
+    /// The index of the parent rule within the grammar.
     pub variable_index: u32,
+    /// The number of symbols that have already been matched.
     pub step_index: u32,
+    /// The production being matched.
     pub production: &'a Production,
+    /// A boolean indicating whether any of the already-matched children were
+    /// hidden nodes and had fields. Ordinarily, a parse item's behavior is not
+    /// affected by the symbols of its preceding children; it only needs to
+    /// keep track of their fields and aliases.
+    ///
+    /// Take for example these two items:
+    ///   X -> a b • c
+    ///   X -> a g • c
+    ///
+    /// They can be considered equivalent, for the purposes of parse table
+    /// generation, because they entail the same actions. But if this flag is
+    /// true, then the item's set of inherited fields may depend on the specific
+    /// symbols of its preceding children.
+    pub has_preceding_inherited_fields: bool,
 }
 
+/// A ParseItemSet represents a set of in-progress matches of productions in a
+/// grammar, and for each in-progress match, a set of "lookaheads" - tokens that
+/// are allowed to *follow* the in-progress rule. This object corresponds directly
+/// to a state in the final parse table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParseItemSet<'a> {
     pub entries: Vec<(ParseItem<'a>, TokenSet)>,
 }
 
+/// A ParseItemSetCore is like a ParseItemSet, but without the lookahead
+/// information. Parse states with the same core are candidates for merging.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParseItemSetCore<'a> {
     pub entries: Vec<ParseItem<'a>>,
@@ -65,139 +75,11 @@ pub(crate) struct TokenSetDisplay<'a>(
     pub &'a LexicalGrammar,
 );
 
-#[allow(dead_code)]
 pub(crate) struct ParseItemSetDisplay<'a>(
     pub &'a ParseItemSet<'a>,
     pub &'a SyntaxGrammar,
     pub &'a LexicalGrammar,
 );
-
-impl TokenSet {
-    pub fn new() -> Self {
-        Self {
-            terminal_bits: SmallBitVec::new(),
-            external_bits: SmallBitVec::new(),
-            eof: false,
-        }
-    }
-
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = Symbol> + 'a {
-        self.terminal_bits
-            .iter()
-            .enumerate()
-            .filter_map(|(i, value)| {
-                if value {
-                    Some(Symbol::terminal(i))
-                } else {
-                    None
-                }
-            })
-            .chain(
-                self.external_bits
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, value)| {
-                        if value {
-                            Some(Symbol::external(i))
-                        } else {
-                            None
-                        }
-                    }),
-            )
-            .chain(if self.eof { Some(Symbol::end()) } else { None })
-    }
-
-    pub fn terminals<'a>(&'a self) -> impl Iterator<Item = Symbol> + 'a {
-        self.terminal_bits
-            .iter()
-            .enumerate()
-            .filter_map(|(i, value)| {
-                if value {
-                    Some(Symbol::terminal(i))
-                } else {
-                    None
-                }
-            })
-    }
-
-    pub fn contains(&self, symbol: &Symbol) -> bool {
-        match symbol.kind {
-            SymbolType::NonTerminal => panic!("Cannot store non-terminals in a TokenSet"),
-            SymbolType::Terminal => self.terminal_bits.get(symbol.index).unwrap_or(false),
-            SymbolType::External => self.external_bits.get(symbol.index).unwrap_or(false),
-            SymbolType::End => self.eof,
-        }
-    }
-
-    pub fn contains_terminal(&self, index: usize) -> bool {
-        self.terminal_bits.get(index).unwrap_or(false)
-    }
-
-    pub fn insert(&mut self, other: Symbol) {
-        let vec = match other.kind {
-            SymbolType::NonTerminal => panic!("Cannot store non-terminals in a TokenSet"),
-            SymbolType::Terminal => &mut self.terminal_bits,
-            SymbolType::External => &mut self.external_bits,
-            SymbolType::End => {
-                self.eof = true;
-                return;
-            }
-        };
-        if other.index >= vec.len() {
-            vec.resize(other.index + 1, false);
-        }
-        vec.set(other.index, true);
-    }
-
-    pub fn insert_all_terminals(&mut self, other: &TokenSet) -> bool {
-        let mut result = false;
-        if other.terminal_bits.len() > self.terminal_bits.len() {
-            self.terminal_bits.resize(other.terminal_bits.len(), false);
-        }
-        for (i, element) in other.terminal_bits.iter().enumerate() {
-            if element {
-                result |= !self.terminal_bits[i];
-                self.terminal_bits.set(i, element);
-            }
-        }
-        result
-    }
-
-    fn insert_all_externals(&mut self, other: &TokenSet) -> bool {
-        let mut result = false;
-        if other.external_bits.len() > self.external_bits.len() {
-            self.external_bits.resize(other.external_bits.len(), false);
-        }
-        for (i, element) in other.external_bits.iter().enumerate() {
-            if element {
-                result |= !self.external_bits[i];
-                self.external_bits.set(i, element);
-            }
-        }
-        result
-    }
-
-    pub fn insert_all(&mut self, other: &TokenSet) -> bool {
-        let mut result = false;
-        if other.eof {
-            result |= !self.eof;
-            self.eof = true;
-        }
-        result |= self.insert_all_terminals(other);
-        result |= self.insert_all_externals(other);
-        result
-    }
-}
-
-impl FromIterator<Symbol> for TokenSet {
-    fn from_iter<T: IntoIterator<Item = Symbol>>(iter: T) -> Self {
-        let mut result = Self::new();
-        for symbol in iter {
-            result.insert(symbol);
-        }
-        result
-    }
-}
 
 impl<'a> ParseItem<'a> {
     pub fn start() -> Self {
@@ -205,6 +87,7 @@ impl<'a> ParseItem<'a> {
             variable_index: u32::MAX,
             production: &START_PRODUCTION,
             step_index: 0,
+            has_preceding_inherited_fields: false,
         }
     }
 
@@ -220,8 +103,9 @@ impl<'a> ParseItem<'a> {
         self.prev_step().and_then(|step| step.associativity)
     }
 
-    pub fn precedence(&self) -> i32 {
-        self.prev_step().map_or(0, |step| step.precedence)
+    pub fn precedence(&self) -> &Precedence {
+        self.prev_step()
+            .map_or(&Precedence::None, |step| &step.precedence)
     }
 
     pub fn prev_step(&self) -> Option<&'a ProductionStep> {
@@ -240,12 +124,22 @@ impl<'a> ParseItem<'a> {
         self.variable_index == u32::MAX
     }
 
+    /// Create an item like this one, but advanced by one step.
     pub fn successor(&self) -> ParseItem<'a> {
         ParseItem {
             variable_index: self.variable_index,
             production: self.production,
             step_index: self.step_index + 1,
+            has_preceding_inherited_fields: self.has_preceding_inherited_fields,
         }
+    }
+
+    /// Create an item identical to this one, but with a different production.
+    /// This is used when dynamically "inlining" certain symbols in a production.
+    pub fn substitute_production(&self, production: &'a Production) -> ParseItem<'a> {
+        let mut result = self.clone();
+        result.production = production;
+        result
     }
 }
 
@@ -286,7 +180,6 @@ impl<'a> Default for ParseItemSet<'a> {
     }
 }
 
-#[allow(dead_code)]
 impl<'a> fmt::Display for ParseItemDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         if self.0.is_augmented() {
@@ -302,12 +195,14 @@ impl<'a> fmt::Display for ParseItemDisplay<'a> {
         for (i, step) in self.0.production.steps.iter().enumerate() {
             if i == self.0.step_index as usize {
                 write!(f, " •")?;
-                if step.precedence != 0 || step.associativity.is_some() {
-                    write!(
-                        f,
-                        " (prec {:?} assoc {:?})",
-                        step.precedence, step.associativity
-                    )?;
+                if let Some(associativity) = step.associativity {
+                    if !step.precedence.is_none() {
+                        write!(f, " ({} {:?})", step.precedence, associativity)?;
+                    } else {
+                        write!(f, " ({:?})", associativity)?;
+                    }
+                } else if !step.precedence.is_none() {
+                    write!(f, " ({})", step.precedence)?;
                 }
             }
 
@@ -325,19 +220,21 @@ impl<'a> fmt::Display for ParseItemDisplay<'a> {
             }
 
             if let Some(alias) = &step.alias {
-                write!(f, " (alias {})", alias.value)?;
+                write!(f, "@{}", alias.value)?;
             }
         }
 
         if self.0.is_done() {
             write!(f, " •")?;
             if let Some(step) = self.0.production.steps.last() {
-                if step.precedence != 0 || step.associativity.is_some() {
-                    write!(
-                        f,
-                        " (prec {:?} assoc {:?})",
-                        step.precedence, step.associativity
-                    )?;
+                if let Some(associativity) = step.associativity {
+                    if !step.precedence.is_none() {
+                        write!(f, " ({} {:?})", step.precedence, associativity)?;
+                    } else {
+                        write!(f, " ({:?})", associativity)?;
+                    }
+                } else if !step.precedence.is_none() {
+                    write!(f, " ({})", step.precedence)?;
                 }
             }
         }
@@ -391,22 +288,22 @@ impl<'a> Hash for ParseItem<'a> {
         hasher.write_u32(self.step_index);
         hasher.write_i32(self.production.dynamic_precedence);
         hasher.write_usize(self.production.steps.len());
-        hasher.write_i32(self.precedence());
+        hasher.write_i32(self.has_preceding_inherited_fields as i32);
+        self.precedence().hash(hasher);
         self.associativity().hash(hasher);
 
-        // When comparing two parse items, the symbols that were already consumed by
-        // both items don't matter. Take for example these two items:
-        //   X -> a b • c
-        //   X -> a d • c
-        // These two items can be considered equivalent, for the purposes of parse
-        // table generation, because they entail the same actions. However, if the
-        // productions have different aliases or field names, they *cannot* be
-        // treated as equivalent, because those details are ultimately stored as
-        // attributes of the `REDUCE` action that will be performed when the item
-        // is finished.
+        // The already-matched children don't play any role in the parse state for
+        // this item, unless any of the following are true:
+        //   * the children have fields
+        //   * the children have aliases
+        //   * the children are hidden and
+        // See the docs for `has_preceding_inherited_fields`.
         for step in &self.production.steps[0..self.step_index as usize] {
             step.alias.hash(hasher);
             step.field_name.hash(hasher);
+            if self.has_preceding_inherited_fields {
+                step.symbol.hash(hasher);
+            }
         }
         for step in &self.production.steps[self.step_index as usize..] {
             step.hash(hasher);
@@ -422,6 +319,7 @@ impl<'a> PartialEq for ParseItem<'a> {
             || self.production.steps.len() != other.production.steps.len()
             || self.precedence() != other.precedence()
             || self.associativity() != other.associativity()
+            || self.has_preceding_inherited_fields != other.has_preceding_inherited_fields
         {
             return false;
         }
@@ -434,6 +332,11 @@ impl<'a> PartialEq for ParseItem<'a> {
                     return false;
                 }
                 if step.field_name != other.production.steps[i].field_name {
+                    return false;
+                }
+                if self.has_preceding_inherited_fields
+                    && step.symbol != other.production.steps[i].symbol
+                {
                     return false;
                 }
             } else if *step != other.production.steps[i] {

@@ -1,8 +1,6 @@
 use super::nfa::CharacterSet;
-use super::rules::{Alias, Associativity, Symbol};
-use hashbrown::HashMap;
-use std::collections::BTreeMap;
-
+use super::rules::{Alias, Symbol, TokenSet};
+use std::collections::{BTreeMap, HashMap};
 pub(crate) type ProductionInfoId = usize;
 pub(crate) type ParseStateId = usize;
 pub(crate) type LexStateId = usize;
@@ -19,11 +17,15 @@ pub(crate) enum ParseAction {
     Reduce {
         symbol: Symbol,
         child_count: usize,
-        precedence: i32,
         dynamic_precedence: i32,
-        associativity: Option<Associativity>,
         production_id: ProductionInfoId,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GotoAction {
+    Goto(ParseStateId),
+    ShiftExtra,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,8 +38,9 @@ pub(crate) struct ParseTableEntry {
 pub(crate) struct ParseState {
     pub id: ParseStateId,
     pub terminal_entries: HashMap<Symbol, ParseTableEntry>,
-    pub nonterminal_entries: HashMap<Symbol, ParseStateId>,
+    pub nonterminal_entries: HashMap<Symbol, GotoAction>,
     pub lex_state_id: usize,
+    pub external_lex_state_id: usize,
     pub core_id: usize,
 }
 
@@ -59,6 +62,7 @@ pub(crate) struct ParseTable {
     pub symbols: Vec<Symbol>,
     pub production_infos: Vec<ProductionInfo>,
     pub max_aliased_production_length: usize,
+    pub external_lex_states: Vec<TokenSet>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -70,6 +74,7 @@ pub(crate) struct AdvanceAction {
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LexState {
     pub accept_action: Option<Symbol>,
+    pub eof_action: Option<AdvanceAction>,
     pub advance_actions: Vec<(CharacterSet, AdvanceAction)>,
 }
 
@@ -94,6 +99,11 @@ impl Default for LexTable {
 }
 
 impl ParseState {
+    pub fn is_end_of_non_terminal_extra(&self) -> bool {
+        self.terminal_entries
+            .contains_key(&Symbol::end_of_nonterminal_extra())
+    }
+
     pub fn referenced_states<'a>(&'a self) -> impl Iterator<Item = ParseStateId> + 'a {
         self.terminal_entries
             .iter()
@@ -103,7 +113,13 @@ impl ParseState {
                     _ => None,
                 })
             })
-            .chain(self.nonterminal_entries.iter().map(|(_, state)| *state))
+            .chain(self.nonterminal_entries.iter().filter_map(|(_, action)| {
+                if let GotoAction::Goto(state) = action {
+                    Some(*state)
+                } else {
+                    None
+                }
+            }))
     }
 
     pub fn update_referenced_states<F>(&mut self, mut f: F)
@@ -121,15 +137,18 @@ impl ParseState {
                 }
             }
         }
-        for (symbol, other_state) in &self.nonterminal_entries {
-            let result = f(*other_state, self);
-            if result != *other_state {
-                updates.push((*symbol, 0, result));
+        for (symbol, action) in &self.nonterminal_entries {
+            if let GotoAction::Goto(other_state) = action {
+                let result = f(*other_state, self);
+                if result != *other_state {
+                    updates.push((*symbol, 0, result));
+                }
             }
         }
         for (symbol, action_index, new_state) in updates {
             if symbol.is_non_terminal() {
-                self.nonterminal_entries.insert(symbol, new_state);
+                self.nonterminal_entries
+                    .insert(symbol, GotoAction::Goto(new_state));
             } else {
                 let entry = self.terminal_entries.get_mut(&symbol).unwrap();
                 if let ParseAction::Shift { is_repetition, .. } = entry.actions[action_index] {
@@ -139,16 +158,6 @@ impl ParseState {
                     };
                 }
             }
-        }
-    }
-}
-
-impl ParseAction {
-    pub fn precedence(&self) -> i32 {
-        if let ParseAction::Reduce { precedence, .. } = self {
-            *precedence
-        } else {
-            0
         }
     }
 }

@@ -1,5 +1,4 @@
-Tree-sitter Highlighting
-=========================
+# `tree-sitter-highlight`
 
 [![Build Status](https://travis-ci.org/tree-sitter/tree-sitter.svg?branch=master)](https://travis-ci.org/tree-sitter/tree-sitter)
 [![Build status](https://ci.appveyor.com/api/projects/status/vtmbd6i92e97l55w/branch/master?svg=true)](https://ci.appveyor.com/project/maxbrunsfeld/tree-sitter/branch/master)
@@ -7,49 +6,103 @@ Tree-sitter Highlighting
 
 ### Usage
 
-Compile some languages into your app, and declare them:
+Add this crate, and the language-specific crates for whichever languages you want to parse, to your `Cargo.toml`:
 
-```rust
-extern "C" tree_sitter_html();
-extern "C" tree_sitter_javascript();
+```toml
+[dependencies]
+tree-sitter-highlight = "0.19"
+tree-sitter-html = "0.19"
+tree-sitter-javascript = "0.19"
 ```
 
-Load some *property sheets*:
+Define the list of highlight names that you will recognize:
 
 ```rust
-use tree_sitter_highlight::load_property_sheet;
+let highlight_names : Vec<String> = [
+    "attribute",
+    "constant",
+    "function.builtin",
+    "function",
+    "keyword",
+    "operator",
+    "property",
+    "punctuation",
+    "punctuation.bracket",
+    "punctuation.delimiter",
+    "string",
+    "string.special",
+    "tag",
+    "type",
+    "type.builtin",
+    "variable",
+    "variable.builtin",
+    "variable.parameter",
+]
+.iter()
+.cloned()
+.map(String::from)
+.collect();
+```
 
-let javascript_property_sheet = load_property_sheet(
-  fs::read_to_string("./tree-sitter-javascript/src/highlights.json").unwrap()
+Create a highlighter. You need one of these for each thread that you're using for syntax highlighting:
+
+```rust
+use tree_sitter_highlight::Highlighter;
+
+let highlighter = Highlighter::new();
+```
+
+Load some highlighting queries from the `queries` directory of some language repositories:
+
+```rust
+use tree_sitter_highlight::HighlightConfiguration;
+
+let html_language = unsafe { tree_sitter_html() };
+let javascript_language = unsafe { tree_sitter_javascript() };
+
+let html_config = HighlightConfiguration::new(
+    tree_sitter_html::language(),
+    tree_sitter_html::HIGHLIGHTS_QUERY,
+    tree_sitter_html::INJECTIONS_QUERY,
+    "",
 ).unwrap();
 
-let html_property_sheet = load_property_sheet(
-  fs::read_to_string("./tree-sitter-html/src/highlights.json").unwrap()
+let javascript_config = HighlightConfiguration::new(
+    tree_sitter_javascript::language(),
+    tree_sitter_javascript::HIGHLIGHTS_QUERY,
+    tree_sitter_javascript::INJECTIONS_QUERY,
+    tree_sitter_javascript::LCOALS_QUERY,
 ).unwrap();
+```
+
+Configure the recognized names:
+
+```rust
+javascript_config.configure(&highlight_names);
 ```
 
 Highlight some code:
 
 ```rust
-use tree_sitter_highlight::{highlight, HighlightEvent};
+use tree_sitter_highlight::HighlightEvent;
 
-let highlights = highlight(
+let highlights = highlighter.highlight(
+    &javascript_config,
     b"const x = new Y();",
-    unsafe { tree_sitter_javascript() },
-    &javascript_property_sheet,
-    &|_| None
+    None,
+    |_| None
 ).unwrap();
 
 for event in highlights {
-    match event {
-        HighlightEvent::Source(s) {
-            eprintln!("source: {:?}", s);
+    match event.unwrap() {
+        HighlightEvent::Source {start, end} => {
+            eprintln!("source: {}-{}", start, end);
         },
-        HighlightEvent::ScopeStart(s) {
-            eprintln!("scope started: {:?}", s);
+        HighlightEvent::HighlightStart(s) => {
+            eprintln!("highlight style started: {:?}", s);
         },
-        HighlightEvent::ScopeEnd(s) {
-            eprintln!("scope ended: {:?}", s);
+        HighlightEvent::HighlightEnd => {
+            eprintln!("highlight style ended");
         },
     }
 }

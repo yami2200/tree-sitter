@@ -40,7 +40,7 @@ bool __ts_zipper_right(const _TSZipper *zip, _TSZipper *result) {
     if (zip->child_index == parent_subtree.ptr->child_count - 1) {
         return false;
     }
-    const Subtree sibling = parent_subtree.ptr->children[zip->child_index + 1];
+    const Subtree sibling = ts_subtree_children(parent_subtree)[zip->child_index + 1];
     
     bool extra = ts_subtree_extra(zip->subtree);
     uint32_t structural_child_index;
@@ -75,7 +75,7 @@ bool _ts_zipper_down(const _TSZipper *zip, _TSZipper *result, TSLanguage *lang) 
     if (ts_subtree_child_count(zip->subtree) == 0) {
         return false;
     } else {
-        Subtree child = zip->subtree.ptr->children[0];
+        Subtree child = ts_subtree_children(zip->subtree)[0];
         const TSSymbol *alias_sequence = ts_language_alias_sequence(lang, zip->subtree.ptr->production_id);
         *result = (_TSZipper) {
             .parent = zip,

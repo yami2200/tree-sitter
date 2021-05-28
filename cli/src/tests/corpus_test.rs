@@ -1,4 +1,3 @@
-use super::helpers::allocations;
 use super::helpers::edits::{get_random_edit, invert_edit};
 use super::helpers::fixtures::{fixtures_dir, get_language, get_test_language};
 use super::helpers::random::Rand;
@@ -9,7 +8,7 @@ use crate::test::{parse_tests, print_diff, print_diff_key, strip_sexp_fields, Te
 use crate::util;
 use lazy_static::lazy_static;
 use std::{env, fs, time, usize};
-use tree_sitter::{LogType, Node, Parser, Tree};
+use tree_sitter::{allocations, LogType, Node, Parser, Tree};
 
 const EDIT_COUNT: usize = 3;
 const TRIAL_COUNT: usize = 10;
@@ -21,7 +20,11 @@ const LANGUAGES: &'static [&'static str] = &[
     "go",
     "html",
     "javascript",
+    "json",
+    "php",
     "python",
+    "ruby",
+    "rust",
 ];
 
 lazy_static! {
@@ -57,7 +60,11 @@ fn test_real_language_corpus_files() {
         }
 
         let language = get_language(language_name);
-        let corpus_dir = grammars_dir.join(language_name).join("corpus");
+        let mut corpus_dir = grammars_dir.join(language_name).join("corpus");
+        if !corpus_dir.is_dir() {
+            corpus_dir = grammars_dir.join(language_name).join("test").join("corpus");
+        }
+
         let error_corpus_file = error_corpus_dir.join(&format!("{}_errors.txt", language_name));
         let main_tests = parse_tests(&corpus_dir).unwrap();
         let error_tests = parse_tests(&error_corpus_file).unwrap_or(TestEntry::default());
@@ -240,6 +247,16 @@ fn test_feature_corpus_files() {
                 failure_count += 1;
             }
         } else {
+            if let Err(e) = &generate_result {
+                eprintln!(
+                    "Unexpected error for test grammar '{}':\n{}",
+                    language_name,
+                    e.message()
+                );
+                failure_count += 1;
+                continue;
+            }
+
             let corpus_path = test_path.join("corpus.txt");
             let c_code = generate_result.unwrap().1;
             let language = get_test_language(language_name, &c_code, Some(&test_path));
@@ -300,7 +317,8 @@ fn check_consistent_sizes(tree: &Tree, input: &Vec<u8>) {
         let mut last_child_end_point = start_point;
         let mut some_child_has_changes = false;
         let mut actual_named_child_count = 0;
-        for child in node.children() {
+        for i in 0..node.child_count() {
+            let child = node.child(i).unwrap();
             assert!(child.start_byte() >= last_child_end_byte);
             assert!(child.start_position() >= last_child_end_point);
             check(child, line_offsets);
@@ -337,7 +355,7 @@ fn check_consistent_sizes(tree: &Tree, input: &Vec<u8>) {
 }
 
 fn check_changed_ranges(old_tree: &Tree, new_tree: &Tree, input: &Vec<u8>) -> Result<(), String> {
-    let changed_ranges = old_tree.changed_ranges(new_tree);
+    let changed_ranges = old_tree.changed_ranges(new_tree).collect();
     let old_scope_sequence = ScopeSequence::new(old_tree);
     let new_scope_sequence = ScopeSequence::new(new_tree);
     old_scope_sequence.check_changes(&new_scope_sequence, &input, &changed_ranges)
@@ -381,7 +399,9 @@ fn flatten_tests(test: TestEntry) -> Vec<(String, Vec<u8>, String, bool)> {
                 }
                 result.push((name, input, output, has_fields));
             }
-            TestEntry::Group { mut name, children } => {
+            TestEntry::Group {
+                mut name, children, ..
+            } => {
                 if !prefix.is_empty() {
                     name.insert_str(0, " - ");
                     name.insert_str(0, prefix);
