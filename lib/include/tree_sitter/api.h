@@ -667,12 +667,7 @@ bool ts_tree_cursor_goto_first_child(TSTreeCursor *);
  * if no such child was found.
  */
 int64_t ts_tree_cursor_goto_first_child_for_byte(TSTreeCursor *, uint32_t);
-<<<<<<< HEAD
 int64_t ts_tree_cursor_goto_first_child_for_point(TSTreeCursor *, TSPoint);
-=======
-    
-TSTreeCursor ts_tree_cursor_copy(const TSTreeCursor *);
->>>>>>> 4a351514b16bbc9e7e85ab7283098159f3cf730e
 
 TSTreeCursor ts_tree_cursor_copy(const TSTreeCursor *);
 
